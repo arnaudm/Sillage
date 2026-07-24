@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Sillage</string>
+    <key>CFBundleDisplayName</key>
+    <string>Sillage</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.cletetour.sillage</string>
+    <key>CFBundleExecutable</key>
+    <string>Sillage</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>26.0</string>
+    <!-- App agent (menu bar) : pas d'icône dans le Dock. -->
+    <key>LSUIElement</key>
+    <true/>
+    <!-- Texte affiché lors de la demande d'accès micro (TCC). -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Sillage enregistre le micro sélectionné pour transcrire vos réunions localement.</string>
+    <!-- Capture du son système via Core Audio process taps. -->
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Sillage capture le son du système pour transcrire vos réunions localement.</string>
+</dict>
+</plist>
