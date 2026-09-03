@@ -27,9 +27,15 @@ Command Line Tools.
   pistes restent synchronisées (pas de décalage dans le transcript).
 - 🗑️ **Confidentialité** : l'audio (`mic.wav` / `system.wav`) est **supprimé
   automatiquement** une fois le transcript généré.
-- 🪟 **Fenêtre de gestion des transcripts** : label éditable par session,
-  copier dans le presse-papiers (label inclus), supprimer, ouvrir le dossier
-  dans le Finder.
+- 🪟 **Fenêtre des transcripts** : liste groupée par jour (Aujourd'hui / Hier /
+  JJ/MM) avec durée de chaque enregistrement, lecture du transcript dans la même
+  fenêtre, libellé éditable, copie, suppression, ouverture du dossier.
+- 📊 **Avancement de la transcription** : barre, pourcentage et temps restant
+  estimé, déduits de la position des segments dans l'audio. Annulable.
+- ♻️ **Relance** : si la transcription échoue, l'audio est conservé et un bouton
+  permet de la relancer.
+- 🕘 **Accès rapide** : les 10 derniers transcripts directement dans le panneau
+  de la barre de menus, avec copie en un clic.
 - 🔴 **Panneau flottant** *Liquid Glass* avec bouton Stop, toujours visible
   pendant l'enregistrement.
 - ⚠️ **Confirmation** avant de quitter l'application.
@@ -69,14 +75,18 @@ sinon en ad-hoc).
 
 ## Utilisation
 
-1. Lance l'app → une icône **●** apparaît dans la barre de menus.
+1. Lance l'app → une icône **●** apparaît dans la barre de menus. Le panneau
+   liste les 10 derniers transcripts ; un clic ouvre l'un d'eux.
 2. Choisis la **source micro**, active/désactive **Capturer le son système**.
 3. **Démarrer** → un panneau flottant affiche le chrono et un bouton Stop.
-4. **Arrêter** → la transcription se lance, l'audio est supprimé, et le
-   transcript apparaît dans **Voir les transcripts**.
+4. **Arrêter** → la transcription démarre en affichant son avancement. L'audio
+   est supprimé dès que le transcript est écrit, et celui-ci apparaît dans
+   **Voir tous les transcripts**.
 
-Les transcripts sont dans
-`~/Library/Application Support/Sillage/Recordings/<horodatage>/transcript.md`.
+Chaque session est un dossier
+`~/Library/Application Support/Sillage/Recordings/<horodatage ISO 8601>/`
+contenant le `transcript.md`, un `meta.json` (durée mesurée, état des deux
+pistes) et un `label.txt` si tu as nommé la session.
 
 ## Permissions demandées
 
@@ -86,23 +96,28 @@ Les transcripts sont dans
 
 ## Confidentialité
 
-Capture et transcription sont **100 % locales** (aucun réseau). Les fichiers
-audio sont supprimés dès que le transcript est produit ; seul le `transcript.md`
-(et un `label.txt` optionnel) est conservé.
+Capture et transcription sont **100 % locales** : ton audio et ton texte ne
+quittent jamais la machine, et Sillage n'ouvre aucune connexion. Seule exception,
+sans rapport avec tes données : au premier usage, **macOS** peut télécharger
+lui-même le modèle de langue français s'il n'est pas déjà installé.
+
+Les fichiers audio sont supprimés dès que le transcript est produit — **sauf si
+la transcription échoue**, auquel cas ils sont conservés pour permettre une
+relance, et supprimés à sa réussite.
 
 ## Architecture
 
 | Fichier | Rôle |
 |---|---|
 | `SillageApp.swift` | Point d'entrée SwiftUI, icône barre de menus, fenêtre transcripts |
-| `ContentView.swift` | Panneau : sélecteur micro, toggle son système, Démarrer/Arrêter, Quitter |
-| `RecordingController.swift` | Orchestration start/stop, sessions, transcription, suppression audio |
-| `AudioDeviceManager.swift` | Énumération Core Audio des entrées |
+| `ContentView.swift` | Panneau : micro, son système, Démarrer/Arrêter, derniers transcripts |
+| `RecordingController.swift` | Orchestration start/stop, sessions, avancement, relance, suppression audio |
+| `AudioDeviceManager.swift` | Énumération Core Audio des entrées, observation des branchements |
 | `MicRecorder.swift` | Capture micro (IOProc Core Audio) → `mic.wav` |
 | `SystemAudioRecorder.swift` | Capture son système (process tap + device agrégé) → `system.wav` |
-| `Transcriber.swift` | Transcription `SpeechAnalyzer` + fusion des pistes en Markdown |
-| `TranscriptStore.swift` | Lecture/suppression/label des transcripts sur disque |
-| `TranscriptsView.swift` | Fenêtre de gestion des transcripts |
+| `Transcriber.swift` | Modèle de langue, transcription `SpeechAnalyzer`, fusion des pistes |
+| `TranscriptStore.swift` | Transcripts sur disque : lecture, libellé, `meta.json`, regroupement par jour |
+| `TranscriptsView.swift` | Fenêtre des transcripts : liste et vue détail |
 | `FloatingStopController.swift` / `FloatingStopView.swift` | Panneau flottant Liquid Glass |
 | `Log.swift` | Loggers `os.Logger` (sous-système `com.cletetour.sillage`) |
 
@@ -111,6 +126,12 @@ audio sont supprimés dès que le transcript est produit ; seul le `transcript.m
 - Sur **haut-parleurs**, le micro capte le son système (écho) → le même passage
   peut apparaître dans les deux pistes. **Utilise un casque** pour l'éviter.
   (Une annulation d'écho logicielle est envisagée.)
+- La **langue est fixée à `fr-FR`** dans le code : Sillage transcrit en français
+  quelle que soit la langue du système.
+- Le tap système ne livre de l'audio **que quand du son sort effectivement**. Si
+  la permission « enregistrement des sons du système » n'est pas accordée, la
+  piste système reste vide et seul le micro est transcrit — sans erreur, mais
+  sans lignes « Interlocuteur » dans le transcript.
 - Nécessite macOS 26 (API `SpeechAnalyzer` et *Liquid Glass*).
 
 ## Licence
