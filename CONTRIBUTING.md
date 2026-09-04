@@ -46,8 +46,10 @@ Il n'y a pas de suite de tests automatisés. Teste manuellement :
 4. Pousse sur ton fork et ouvre une **Pull Request** vers `main`.
 5. La PR sera relue ; des changements peuvent être demandés avant le merge.
 
-Merci de garder **un seul sujet par PR** — c'est plus facile à relire et à
-merger.
+Une PR peut couvrir **plusieurs sujets** : inutile de découper un travail qui
+forme un tout. Sépare-les alors en **commits distincts**, un sujet par commit —
+c'est ce qui permet de relire chaque point pour lui-même, et de merger le reste
+si l'un d'eux demande encore des changements.
 
 ## Conventions
 
