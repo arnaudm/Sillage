@@ -160,9 +160,19 @@ final class SystemAudioRecorder {
         Double(ticks) * Double(timebase.numer) / Double(timebase.denom) / 1_000_000_000
     }
 
+    /// true si le tap n'a jamais livré le moindre buffer : la piste produite est
+    /// un simple en-tête WAV, inexploitable.
+    private(set) var capturedNothing = false
+
     func stop() async {
+        let frames = framesWritten
+        capturedNothing = frames == 0
         cleanup()
-        Log.system.notice("Capture son système arrêtée")
+        if capturedNothing {
+            Log.system.error("Capture son système arrêtée SANS AUCUN échantillon — piste vide")
+        } else {
+            Log.system.notice("Capture son système arrêtée (\(frames, privacy: .public) frames)")
+        }
     }
 
     private func cleanup() {

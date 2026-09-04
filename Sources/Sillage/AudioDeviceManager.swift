@@ -11,12 +11,17 @@ struct AudioInputDevice: Identifiable, Hashable {
 /// (micro intégré, casque Bluetooth, interface externe…).
 enum AudioDeviceManager {
 
+    /// Préfixe de l'agrégat privé créé par SystemAudioRecorder : visible depuis
+    /// notre propre process, il n'a rien à faire dans le sélecteur de micro.
+    private static let ownAggregatePrefix = "com.cletetour.sillage.agg."
+
     static func inputDevices() -> [AudioInputDevice] {
         guard let ids = allDeviceIDs() else { return [] }
         return ids.compactMap { id in
             guard hasInputChannels(id),
                   let name = stringProperty(id, kAudioObjectPropertyName) else { return nil }
             let uid = stringProperty(id, kAudioDevicePropertyDeviceUID) ?? ""
+            guard !uid.hasPrefix(ownAggregatePrefix) else { return nil }
             return AudioInputDevice(id: id, name: name, uid: uid)
         }
     }
@@ -25,6 +30,22 @@ enum AudioDeviceManager {
     /// AudioDeviceID ne permet pas de savoir quel micro a servi.
     static func name(of id: AudioDeviceID) -> String? {
         stringProperty(id, kAudioObjectPropertyName)
+    }
+
+    /// Appelle `handler` sur la file principale à chaque branchement ou
+    /// débranchement de périphérique. L'observation dure toute la vie de l'app.
+    static func observeDeviceChanges(_ handler: @escaping () -> Void) {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        let status = AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &addr, DispatchQueue.main) { _, _ in
+                handler()
+            }
+        if status != noErr {
+            Log.app.error("Écoute des périphériques indisponible (status \(status, privacy: .public))")
+        }
     }
 
     private static func allDeviceIDs() -> [AudioDeviceID]? {
