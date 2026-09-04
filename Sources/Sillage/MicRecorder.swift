@@ -16,6 +16,9 @@ final class MicRecorder {
     private var ioProcID: AudioDeviceIOProcID?
     private var file: AVAudioFile?
     private var format: AVAudioFormat?
+    /// Format d'écriture : identique à `format`, sauf pour une barrette de
+    /// micros (> 2 canaux) où l'on réduit à un mono.
+    private var fileFormat: AVAudioFormat?
     private var firstSampleLogged = false
     private let ioQueue = DispatchQueue(label: "com.cletetour.sillage.mic-io")
 
@@ -32,17 +35,33 @@ final class MicRecorder {
         deviceID = dev
 
         // 2) Format d'entrée réel du device.
-        guard var asbd = Self.inputFormat(dev),
-              let fmt = AVAudioFormat(streamDescription: &asbd) else {
-            throw fail("Lecture du format d'entrée", -1)
+        let name = AudioDeviceManager.name(of: dev) ?? "device \(dev)"
+        let (status0, read) = Self.inputFormat(dev)
+        var asbd = read
+        guard status0 == noErr else {
+            throw fail("Lecture du format d'entrée de « \(name) »", status0)
+        }
+        guard let fmt = Self.makeFormat(&asbd) else {
+            throw fail("Format d'entrée inexploitable sur « \(name) » : \(asbd.mSampleRate) Hz, \(asbd.mChannelsPerFrame) canaux")
         }
         format = fmt
 
-        // 3) Fichier au format réel (même entrelacement que les buffers).
+        // 3) Fichier au format réel du device (même entrelacement que les
+        //    buffers) — sauf pour une barrette de micros (> 2 canaux, ex. le
+        //    micro intégré des MacBook et ses 3 capsules) : un WAV multicanal
+        //    n'apporte rien à la transcription, on écrit donc un mono.
+        let isArray = fmt.channelCount > 2
+        guard let out = isArray ? Self.monoFormat(sampleRate: fmt.sampleRate) : fmt else {
+            throw fail("Création du format mono impossible (\(fmt.sampleRate) Hz)")
+        }
+        guard !isArray || fmt.commonFormat == .pcmFormatFloat32 else {
+            throw fail("Réduction en mono impossible : le device n'est pas en float32")
+        }
+        fileFormat = out
         file = try AVAudioFile(forWriting: url,
-                               settings: fmt.settings,
+                               settings: out.settings,
                                commonFormat: .pcmFormatFloat32,
-                               interleaved: fmt.isInterleaved)
+                               interleaved: out.isInterleaved)
 
         // 4) IOProc : reçoit les buffers d'entrée et les écrit.
         var procID: AudioDeviceIOProcID?
@@ -62,12 +81,15 @@ final class MicRecorder {
             cleanup()
             throw fail("AudioDeviceStart", status)
         }
-        Log.mic.notice("Micro démarré (device \(dev, privacy: .public), \(fmt.sampleRate, privacy: .public) Hz, \(fmt.channelCount, privacy: .public) ch)")
+        Log.mic.notice("Micro démarré : « \(name, privacy: .public) » (device \(dev, privacy: .public), \(fmt.sampleRate, privacy: .public) Hz, \(fmt.channelCount, privacy: .public) ch → fichier \(out.channelCount, privacy: .public) ch)")
     }
 
     private func write(_ inInputData: UnsafePointer<AudioBufferList>) {
-        guard let format,
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: inInputData)
+        guard let format, let fileFormat,
+              let source = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: inInputData)
+        else { return }
+        guard let buffer = fileFormat === format ? source : Self.firstChannel(of: source, as: fileFormat),
+              buffer.frameLength > 0
         else { return }
         do {
             if !firstSampleLogged {
@@ -78,6 +100,26 @@ final class MicRecorder {
         } catch {
             Log.mic.error("Erreur d'écriture : \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Extrait le premier canal d'une barrette de micros.
+    /// Moyenner les capsules — espacées de plusieurs centimètres — créerait un
+    /// filtrage en peigne dans la voix ; un seul capteur reste propre.
+    private static func firstChannel(of source: AVAudioPCMBuffer,
+                                     as mono: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let frames = Int(source.frameLength)
+        guard frames > 0,
+              let input = source.floatChannelData,
+              let out = AVAudioPCMBuffer(pcmFormat: mono, frameCapacity: source.frameLength),
+              let output = out.floatChannelData?[0]
+        else { return nil }
+        out.frameLength = source.frameLength
+        // `stride` vaut le nombre de canaux si les échantillons sont entrelacés
+        // (cas du micro intégré), 1 si les canaux sont dans des buffers séparés.
+        let step = source.stride
+        let channel = input[0]
+        for i in 0..<frames { output[i] = channel[i * step] }
+        return out
     }
 
     func stop() {
@@ -94,6 +136,13 @@ final class MicRecorder {
         deviceID = AudioObjectID(kAudioObjectUnknown)
         file = nil
         format = nil
+        fileFormat = nil
+    }
+
+    private func fail(_ message: String) -> NSError {
+        Log.mic.error("\(message, privacy: .public)")
+        return NSError(domain: "Sillage.Mic", code: -1,
+                       userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     private func fail(_ what: String, _ status: OSStatus) -> NSError {
@@ -116,7 +165,7 @@ final class MicRecorder {
         return status == noErr ? dev : nil
     }
 
-    private static func inputFormat(_ dev: AudioDeviceID) -> AudioStreamBasicDescription? {
+    private static func inputFormat(_ dev: AudioDeviceID) -> (OSStatus, AudioStreamBasicDescription) {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreamFormat,
             mScope: kAudioObjectPropertyScopeInput,
@@ -124,6 +173,26 @@ final class MicRecorder {
         var asbd = AudioStreamBasicDescription()
         var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
         let status = AudioObjectGetPropertyData(dev, &address, 0, nil, &size, &asbd)
-        return status == noErr ? asbd : nil
+        return (status, asbd)
+    }
+
+    /// `AVAudioFormat(streamDescription:)` renvoie **nil** dès que le device
+    /// expose plus de 2 canaux : sans layout, il ne sait pas déduire la
+    /// disposition des canaux. C'est le cas du micro intégré des MacBook
+    /// (barrette de 3 capsules) → on fournit un layout « canaux discrets ».
+    private static func makeFormat(_ asbd: inout AudioStreamBasicDescription) -> AVAudioFormat? {
+        guard asbd.mChannelsPerFrame > 2 else {
+            return AVAudioFormat(streamDescription: &asbd)
+        }
+        let tag = kAudioChannelLayoutTag_DiscreteInOrder | asbd.mChannelsPerFrame
+        guard let layout = AVAudioChannelLayout(layoutTag: tag) else { return nil }
+        return AVAudioFormat(streamDescription: &asbd, channelLayout: layout)
+    }
+
+    private static func monoFormat(sampleRate: Double) -> AVAudioFormat? {
+        AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                      sampleRate: sampleRate,
+                      channels: 1,
+                      interleaved: false)
     }
 }

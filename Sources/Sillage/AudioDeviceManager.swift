@@ -21,6 +21,12 @@ enum AudioDeviceManager {
         }
     }
 
+    /// Nom lisible d'un périphérique — utilisé dans les logs, où un simple
+    /// AudioDeviceID ne permet pas de savoir quel micro a servi.
+    static func name(of id: AudioDeviceID) -> String? {
+        stringProperty(id, kAudioObjectPropertyName)
+    }
+
     private static func allDeviceIDs() -> [AudioDeviceID]? {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
