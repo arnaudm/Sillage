@@ -50,6 +50,9 @@ final class RecordingController: ObservableObject {
     @Published var statusMessage: String? = nil
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var activity: SessionActivity?
+    /// Vrai tant que la tâche de transcription tourne, y compris après une
+    /// annulation : l'analyseur peut mettre du temps à rendre la main.
+    @Published private(set) var isTranscribing: Bool = false
     @Published private(set) var lastTranscriptionError: String?
     @Published private(set) var transcription: TranscriptionProgress?
 
@@ -140,21 +143,27 @@ final class RecordingController: ObservableObject {
         activity?.phase = .transcribing
 
         statusMessage = "Transcription en cours…"
+        isTranscribing = true
         transcriptionTask = Task {
             await recorder?.stop()
-            if recorder?.capturedNothing == true {
+            let capturedNothing = recorder?.capturedNothing == true
+            if capturedNothing {
                 self.statusMessage = "Aucun son système capté — seule la piste micro sera transcrite."
             }
             await self.transcribeSession(dir: dir,
                                          duration: duration,
-                                         systemRequested: systemRequested)
+                                         systemRequested: systemRequested,
+                                         systemCapturedNothing: capturedNothing)
+            self.isTranscribing = false
         }
     }
 
-    /// Abandonne la transcription en cours. Libère l'interface ; le travail déjà
-    /// lancé dans l'analyseur peut survivre jusqu'à la fermeture de l'app.
+    /// Abandonne la transcription en cours. Libère l'interface tout de suite ;
+    /// la tâche, elle, peut mettre du temps à s'arrêter — `isTranscribing` reste
+    /// vrai jusque-là pour qu'une relance ne s'exécute pas par-dessus.
     func cancelTranscription() {
-        transcriptionTask?.cancel()
+        guard let task = transcriptionTask else { return }
+        task.cancel()
         transcriptionTask = nil
         activity = nil
         transcription = nil
@@ -163,22 +172,27 @@ final class RecordingController: ObservableObject {
     }
 
     /// Relance la transcription d'un enregistrement dont l'audio a survécu à un
-    /// échec précédent. Sans effet si une session est déjà en cours.
+    /// échec précédent. Sans effet si une transcription tourne encore.
     func retryTranscription(at dir: URL) {
-        guard activity == nil else { return }
+        guard activity == nil, !isTranscribing else { return }
 
         let micURL = dir.appendingPathComponent("mic.wav")
         let sysURL = dir.appendingPathComponent("system.wav")
         // L'audio étant là, sa durée réelle vaut mieux qu'une estimation.
         let duration = audioDuration(of: micURL) ?? audioDuration(of: sysURL) ?? 0
         let systemRequested = FileManager.default.fileExists(atPath: sysURL.path)
+        // Un tap muet laisse un system.wav réduit à son en-tête : 0 frame.
+        let capturedNothing = systemRequested && (audioDuration(of: sysURL) ?? 0) <= 0
 
         activity = SessionActivity(dirName: dir.lastPathComponent, phase: .transcribing)
         statusMessage = "Transcription en cours…"
+        isTranscribing = true
         transcriptionTask = Task {
             await self.transcribeSession(dir: dir,
                                          duration: duration,
-                                         systemRequested: systemRequested)
+                                         systemRequested: systemRequested,
+                                         systemCapturedNothing: capturedNothing)
+            self.isTranscribing = false
         }
     }
 
@@ -223,7 +237,8 @@ final class RecordingController: ObservableObject {
     /// puis supprime l'audio (uniquement en cas de succès).
     private func transcribeSession(dir: URL?,
                                    duration: TimeInterval,
-                                   systemRequested: Bool) async {
+                                   systemRequested: Bool,
+                                   systemCapturedNothing: Bool) async {
         defer {
             activity = nil
             transcription = nil
@@ -258,14 +273,20 @@ final class RecordingController: ObservableObject {
                                                    startedAt: startedAt, locale: locale)
             }
 
+            // L'analyseur peut ignorer l'annulation et rendre un résultat : sans
+            // ce contrôle, on supprimerait l'audio qu'on vient de promettre.
+            try Task.checkCancellation()
+
             let markdown = Transcriber.mergeToMarkdown(mic: mic, system: system, date: Date())
             let outURL = dir.appendingPathComponent("transcript.md")
             try markdown.write(to: outURL, atomically: true, encoding: .utf8)
 
+            // Une piste système réduite à son en-tête existe sans rien contenir :
+            // c'est « capture indisponible », pas « aucune parole détectée ».
             TranscriptStore.saveMeta(
                 SessionMeta(duration: duration,
                             systemRequested: systemRequested,
-                            systemTranscribed: hasSystemTrack,
+                            systemTranscribed: hasSystemTrack && !systemCapturedNothing,
                             micSegments: mic.count,
                             systemSegments: system.count),
                 in: dir)
@@ -277,8 +298,16 @@ final class RecordingController: ObservableObject {
             // réalisé (uniquement en cas de succès, pour ne pas perdre l'audio
             // si la transcription échoue).
             deleteAudio(at: [micURL, sysURL])
-            statusMessage = "Transcript prêt (\(count) segments) · audio supprimé"
+            let systemNote = systemCapturedNothing ? " · son système non capté" : ""
+            statusMessage = "Transcript prêt (\(count) segments) · audio supprimé\(systemNote)"
         } catch {
+            // Une annulation volontaire n'est pas un échec : ni meta, ni erreur,
+            // l'audio reste sur le disque. Toutes les erreurs remontées après
+            // annulation ne sont pas des CancellationError : le drapeau fait foi.
+            guard !Task.isCancelled else {
+                Log.app.notice("Transcription abandonnée : \(dir.lastPathComponent, privacy: .public)")
+                return
+            }
             TranscriptStore.saveMeta(
                 SessionMeta(duration: duration,
                             systemRequested: systemRequested,

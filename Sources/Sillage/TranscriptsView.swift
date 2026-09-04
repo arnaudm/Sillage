@@ -251,7 +251,7 @@ struct TranscriptsView: View {
                 } label: {
                     Label("Relancer la transcription", systemImage: "arrow.clockwise")
                 }
-                .disabled(controller.activity != nil)
+                .disabled(controller.activity != nil || controller.isTranscribing)
                 .padding(.top, 4)
             default:
                 Text("Cet enregistrement n'a produit aucun transcript.").font(.headline)

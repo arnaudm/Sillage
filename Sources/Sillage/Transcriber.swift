@@ -102,6 +102,9 @@ enum Transcriber {
             }
             return segments
         }
+        // Task non structurée : rien ne l'arrête si l'on quitte par une erreur
+        // levée plus bas. Sur le chemin nominal, .value a déjà été attendu.
+        defer { collector.cancel() }
 
         // Trois étapes distinctes, tracées séparément : sans ça, un blocage ne
         // se distingue pas d'une analyse lente.
@@ -111,8 +114,8 @@ enum Transcriber {
         try await analyzer.finalizeAndFinishThroughEndOfInput()
         Log.app.notice("Analyse finalisée : \(fileURL.lastPathComponent, privacy: .public)")
 
-        // Annuler le collecteur si l'appelant abandonne : c'est une Task non
-        // structurée, elle ne s'arrête pas d'elle-même.
+        // Annuler le collecteur si l'appelant abandonne pendant l'attente :
+        // le defer ci-dessus ne s'exécuterait qu'une fois .value revenu.
         let segments = try await withTaskCancellationHandler {
             try await collector.value
         } onCancel: {
