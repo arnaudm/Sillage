@@ -273,9 +273,13 @@ enum TranscriptStore {
 
     // MARK: - Formatage de la date
 
+    // Un format fixe se lit et s'écrit avec une locale figée : sur un calendrier
+    // non grégorien, « yyyy » donnerait sinon l'année du calendrier de l'utilisateur.
+    private static let posix = Locale(identifier: "en_US_POSIX")
+
     private static let parser: DateFormatter = {
         let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
+        f.locale = posix
         f.timeZone = TimeZone(identifier: "UTC")
         f.dateFormat = "yyyy-MM-dd'T'HH-mm-ss'Z'"
         return f
@@ -283,6 +287,7 @@ enum TranscriptStore {
 
     private static let display: DateFormatter = {
         let f = DateFormatter()
+        f.locale = posix
         f.dateFormat = "dd/MM/yyyy HH'h'mm"
         return f
     }()
@@ -291,24 +296,28 @@ enum TranscriptStore {
     // durées (46:31) et aux horodatages du transcript.
     private static let time: DateFormatter = {
         let f = DateFormatter()
+        f.locale = posix
         f.dateFormat = "HH'h'mm"
         return f
     }()
 
     private static let dayShort: DateFormatter = {
         let f = DateFormatter()
+        f.locale = posix
         f.dateFormat = "dd/MM"
         return f
     }()
 
     private static let dayFull: DateFormatter = {
         let f = DateFormatter()
+        f.locale = posix
         f.dateFormat = "dd/MM/yyyy"
         return f
     }()
 
     private static let shortDateTime: DateFormatter = {
         let f = DateFormatter()
+        f.locale = posix
         f.dateFormat = "dd/MM HH'h'mm"
         return f
     }()
